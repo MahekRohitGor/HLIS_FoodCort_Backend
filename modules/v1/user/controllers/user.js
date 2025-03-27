@@ -67,6 +67,68 @@ class User{
         await common.response(res, response_data);
     }
 
+    async list_user_order(req,res){
+        const requested_data = req.body;
+        const request_data = JSON.parse(common.decryptPlain(requested_data));
+        const user_id = req.user_id;
+
+        const response_data = await userModel.list_user_order(request_data, user_id);
+        await common.response(res, response_data);
+    }
+
+    async list_user_favs(req,res){
+        const requested_data = req.body;
+        const request_data = JSON.parse(common.decryptPlain(requested_data));
+        const user_id = req.user_id;
+
+        const response_data = await userModel.list_user_favs(request_data, user_id);
+        await common.response(res, response_data);
+    }
+
+    async list_notifications(req,res){
+        const requested_data = req.body;
+        const request_data = JSON.parse(common.decryptPlain(requested_data));
+        const user_id = req.user_id;
+
+        const response_data = await userModel.list_notifications(request_data, user_id);
+        await common.response(res, response_data);
+    }
+
+    async add_delivery_address(req,res){
+        const requested_data = req.body;
+        const request_data = JSON.parse(common.decryptPlain(requested_data));
+        const user_id = req.user_id;
+
+        const response_data = await userModel.add_delivery_address(request_data, user_id);
+        await common.response(res, response_data);
+    }
+
+    async add_payment_method(req,res){
+        const requested_data = req.body;
+        const request_data = JSON.parse(common.decryptPlain(requested_data));
+        const user_id = req.user_id;
+
+        const response_data = await userModel.add_payment_method(request_data, user_id);
+        await common.response(res, response_data);
+    }
+
+    async order_track(req,res){
+        const requested_data = req.body;
+        const request_data = JSON.parse(common.decryptPlain(requested_data));
+        const user_id = req.user_id;
+
+        const response_data = await userModel.order_track(request_data, user_id);
+        await common.response(res, response_data);
+    }
+
+    async list_voucher(req,res){
+        const requested_data = req.body;
+        const request_data = JSON.parse(common.decryptPlain(requested_data));
+        const user_id = req.user_id;
+
+        const response_data = await userModel.list_voucher(request_data, user_id);
+        await common.response(res, response_data);
+    }
     
 }
 

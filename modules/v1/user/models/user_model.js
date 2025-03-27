@@ -102,10 +102,9 @@ class userModel{
                 const userFind = `SELECT user_name FROM tbl_user WHERE user_id = ? AND is_active = 1 AND is_deleted = 0`;
                 const [user] = await database.query(userFind, [insertResult.insertId]);
 
-                // Welcome email to driver
                 const subject_email = "Welcome to Food Cort!";
                 const welcomeMessageData = {
-                    name: request_data.full_name || "User"
+                    name: request_data.user_name || "User"
                 }
 
                 try {
@@ -116,6 +115,8 @@ class userModel{
                     console.error("Error sending Welcome email:", error);
                 }
                 
+                await database.query(`insert into tbl_notification_pref (user_id) values (?);`, [insertResult.insertId]);
+
                 return {
                     code: response_code.SUCCESS,
                     message: t('signup_success'),
@@ -351,8 +352,6 @@ class userModel{
                     }
                 }
 
-                const item_ids = items.map(item => item.item_id);
-
                 const userDetails = `SELECT * FROM tbl_user where user_id = ?`;
                 const [user] = await database.query(userDetails, [user_id]);
 
@@ -453,8 +452,7 @@ class userModel{
 
                 const findFav = `SELECT item_id from tbl_user_fav where user_id = ?`;
                 const [favs] = await database.query(findFav, [user_id]);
-
-                const userfavs = favs.map(fav => fav.item_id);                
+                const userfavs = favs.map(fav => fav.item_id);  
 
                 const response = items.map(item => ({
                     item_id: item.item_id,
@@ -539,6 +537,15 @@ class userModel{
 
         async place_order(request_data, user_id){
             try{
+
+                const [driver] = await database.query(`SELECT * FROM tbl_driver where is_available = 1`);
+                if(driver.length === 0){
+                    return {
+                        code: response_code.OPERATION_FAILED,
+                        message: t('cuurently_no_delivery_partner_avail_try_again_after_some_time')
+                    }
+                }
+
                 const items = request_data.items;
                 if (!items || items.length === 0) {
                     return {
@@ -618,14 +625,7 @@ class userModel{
 
                 const [address] = await database.query(`SELECT * FROM tbl_user_delivery_address where address_id = ?`, [address_id]);
 
-                const [driver] = await database.query(`SELECT * FROM tbl_driver where is_available = 1`);
-
-                if(driver.length === 0){
-                    return {
-                        code: response_code.OPERATION_FAILED,
-                        message: t('cuurently_no_delivery_partner_avail_try_again_after_some_time')
-                    }
-                }
+                
 
                 const driver_id = driver[0].driver_id;
 
@@ -643,6 +643,26 @@ class userModel{
                     address: address[0].address_line_1 + ", " + address[0].address_line_2 + ", " + address[0].city + ", " + address[0].state + ", " + address[0].pincode,
                     delivery_partner: driver[0].driver_name,
                     delivery_partner_phone: driver[0].phone_number
+                }
+
+                const [pref] = await database.query(`SELECT * from tbl_notification_pref where user_id = ?`, [user_id]);
+                
+                if(pref && pref[0].is_complete_order){
+                    await database.query(`INSERT INTO tbl_notification (
+                            cover_image,
+                            title,
+                            descriptions,
+                            user_id,
+                            notification_type,
+                            is_read
+                        ) VALUES (
+                            'alert.png',
+                            "Order was placed Successfully",
+                            "Your Order was placed Successfully",
+                            ?,
+                            'alert',
+                            0
+                        );`, [user_id]);
                 }
 
                 return {
@@ -687,8 +707,23 @@ class userModel{
                     }
                 }
 
-                const response = {
-                    
+                const [findOrder] = await database.query(`SELECT * from tbl_order_details where order_id = ?`, orders[0].order_id)
+                const [findItem] = await database.query(`SELECT * from tbl_item where item_id = ?`, findOrder[0].item_id)
+                const [findRest] = await database.query(`SELECT * from tbl_rest where rest_id = ?`, findItem[0].rest_id)
+
+                const response = orders.map(order => ({
+                    rest_name: findRest[0].rest_name,
+                    cover_image: constants.link + findRest[0].cover_image,
+                    date_of_order: order.created_at,
+                    grand_total: order.grand_total,
+                    button1: request_data.is_current_order ? "track order" : "re-order",
+                    button2: request_data.is_current_order ? "detail" : "rate",
+                }))
+
+                return {
+                    code: response_code.SUCCESS,
+                    message: t('here_are_orders'),
+                    data: response
                 }
                 
 
@@ -701,6 +736,259 @@ class userModel{
             }
         }
         
+        async list_user_favs(request_data, user_id){
+            try{
+                const search_text = "";
+
+                if(request_data.search_text){
+                    search_text = request_data.search_text;
+                }
+                const category_id = request_data.category_id;
+                const pattern = `%${search_text}%`;
+                
+                const userDetails = `SELECT * FROM tbl_user where user_id = ?`;
+                const [user] = await database.query(userDetails, [user_id]);
+
+                const latitude = user[0].latitude;
+                const longitude = user[0].longitude;
+
+                const query = `select *, concat(ROUND(( 3959 * ACOS( COS( RADIANS(${latitude}) )  
+                                * COS( RADIANS( r.latitude ) ) 
+                                * COS( RADIANS( r.longitude ) - RADIANS(${longitude}) )  
+                                + SIN( RADIANS(${latitude}) )  
+                                * SIN( RADIANS( r.latitude) ) ) ),0), " km") < 8200 as distance from tbl_user_fav uf 
+                inner join tbl_item i on i.item_id = uf.item_id 
+                inner join tbl_rest r
+                on r.rest_id = i.rest_id
+                where i.category_id = ? and i.item_name like ?`;
+
+                const [results] = await database.query(query, [category_id, pattern]);
+                if(results.length === 0){
+                    return {
+                        code: response_code.OPERATION_FAILED,
+                        message: t('results_not_found')
+                    }
+                }
+
+                const response = results.map(result=>({
+                    image: constants.link + result.cover_image,
+                    item_name: result.item_name,
+                    avg_rating: result.avg_rating,
+                    price: result.price,
+                    time: (result.distance / 20)*60,
+                    is_fav: 1
+                }));
+
+                return {
+                    code: response_code.SUCCESS,
+                    message: t('data_found'),
+                    data: response
+                }
+
+            } catch(error){
+                return {
+                    code: response_code.OPERATION_FAILED,
+                    message: t('some_error_occured'),
+                    data: error.message
+                }
+            }
+        }
+
+        async list_notifications(request_data, user_id){
+            try{
+                const getNotification = `SELECT * FROM tbl_notification where user_id = ?`;
+                const [notifications] = await database.query(getNotification, [user_id]);
+
+                if(notifications.length === 0){
+                    return {
+                        code: response_code.NOT_FOUND,
+                        message: t("no_notification_found")
+                    }
+                }
+
+                await database.query(`UPDATE tbl_notification SET is_read = 1, read_at = current_timestamp() where user_id = ?`, [user_id]);
+
+                const response = notifications.map(notification => ({
+                    cover_image: notification.cover_image,
+                    title: notification.title,
+                    descriptions: notification.descriptions,
+                    time: notification.created_at
+                }));
+
+                return {
+                    code: response_code.SUCCESS,
+                    message: t('notifications_listed'),
+                    data: response
+                }
+
+            } catch(error){
+                return {
+                    code: response_code.OPERATION_FAILED,
+                    message: t("some_error_occured"),
+                    data: error.message
+                }
+            }
+        }
+
+        async add_delivery_address(request_data, user_id){
+            try{
+                const address_data = {
+                    latitude: request_data.latitude,
+                    longitude: request_data.longitude,
+                    address_line_1: request_data.address_line_1,
+                    address_line_2: request_data.address_line_2,
+                    city: request_data.city,
+                    state: request_data.state,
+                    pincode: request_data.pincode,
+                    country_id: request_data.country_id,
+                    user_id: user_id
+                }
+
+                await database.query(`INSERT INTO tbl_user_delivery_address SET ?`, [address_data]);
+
+                return {
+                    code: response_code.SUCCESS,
+                    message: t('address_added_success')
+                }
+
+            } catch(error){
+                return {
+                    code: response_code.OPERATION_FAILED,
+                    message: t("some_error_occured"),
+                    data: error.message
+                }
+            }
+        }
+
+        async add_payment_method(request_data, user_id){
+            try{
+                const payment_method_data = {
+                    card_number: request_data.card_number,
+                    card_holder_name: request_data.card_holder_name,
+                    expired_at: request_data.expires_at,
+                    cvv: request_data.cvv,
+                    user_id: user_id
+                }
+
+                await database.query(`INSERT INTO tbl_payment_method SET ?`, [payment_method_data]);
+
+                const [pref] = await database.query(`SELECT * from tbl_notification_pref where user_id = ?`, [user_id]);
+                
+                if(pref && pref[0].is_payment){
+                    await database.query(`INSERT INTO tbl_notification (
+                            cover_image,
+                            title,
+                            descriptions,
+                            user_id,
+                            notification_type,
+                            is_read
+                        ) VALUES (
+                            'alert.png',
+                            "Payment Method Added",
+                            "A New Payment Method was added to your account.",
+                            ?,
+                            'alert',
+                            0
+                        );`, [user_id]);
+                }
+
+                return {
+                    code: response_code.SUCCESS,
+                    message: t('payment_method_added_success')
+                }
+
+            } catch(error){
+                return {
+                    code: response_code.OPERATION_FAILED,
+                    message: t("some_error_occured"),
+                    data: error.message
+                }
+            }
+        }
+
+        async order_track(request_data, user_id){
+            try{
+                const order_id = request_data.order_id;
+                const [orders] = await database.query(`SELECT * FROM tbl_order where 
+                    order_id = ? and user_id = ? and status = 'confirmed'`, [order_id, user_id]);
+
+                const [users] = await database.query(`SELECT * from tbl_user where user_id = ?`, [user_id]);
+
+                if(orders.length === 0){
+                    return {
+                        code: response_code.NOT_FOUND,
+                        message: t("not_found")
+                    }
+                }
+                console.log(users[0].latitude);
+
+                const [delivery_partner] = await database.query(`SELECT * from tbl_driver where order_id_assigned = ?`, [order_id]);
+                
+                if(delivery_partner.length === 0){
+                    return {
+                        code: response_code.SUCCESS,
+                        message: t('delivery_partner_not_picked_up_order')
+                    }
+                }
+                
+                const response = {
+                    latitude_order: delivery_partner[0].latitude,
+                    longitude_order: delivery_partner[0].longitude,
+                    latitude_user: users[0].latitude,
+                    longitude_user: users[0].longitude,
+                    delivery_partner: delivery_partner[0].driver_name,
+                    delivery_partner_phone: delivery_partner[0].phone_number,
+                    delivery_status: orders[0].delivery_status
+                }
+
+                return {
+                    code: response_code.SUCCESS,
+                    message: t('data_found'),
+                    data: response
+                }
+
+
+            } catch(error){
+                return {
+                    code: response_code.OPERATION_FAILED,
+                    message: t("some_error_occured"),
+                    data: error.message
+                }
+            }
+        }
+
+        async list_voucher(request_data, user_id){
+            try{
+                const [vouchers] = await database.query(`SELECT * FROM tbl_voucher`);
+                if(vouchers.length === 0){
+                    return {
+                        code: response_code.NOT_FOUND,
+                        message: t("not_found")
+                    }
+                }
+
+                const response = vouchers.map(voucher => ({
+                    image: constants.link + voucher.banner_image_name,
+                    title: voucher.title,
+                    descriptions: voucher.descriptions
+                }));
+
+                return {
+                    code: response_code.SUCCESS,
+                    message: t("data_found"),
+                    data: response
+                }
+
+            } catch(error){
+                return {
+                    code: response_code.OPERATION_FAILED,
+                    message: t("some_error_occured"),
+                    data: error.message
+                }
+            }
+        }
+
+
 }
 
 module.exports = new userModel();
