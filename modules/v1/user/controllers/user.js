@@ -129,6 +129,15 @@ class User{
         const response_data = await userModel.list_voucher(request_data, user_id);
         await common.response(res, response_data);
     }
+
+    async list_reviews(req,res){
+        const requested_data = req.body;
+        const request_data = JSON.parse(common.decryptPlain(requested_data));
+        const user_id = req.user_id;
+
+        const response_data = await userModel.list_reviews(request_data, user_id);
+        await common.response(res, response_data);
+    }
     
 }
 

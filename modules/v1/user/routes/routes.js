@@ -19,6 +19,7 @@ const user = (app) =>{
         app.post("/v1/user/add-payment", users.add_payment_method);
         app.post("/v1/user/track-order", users.order_track);
         app.post("/v1/user/list-voucher", users.list_voucher);
+        app.post("/v1/user/list-reviews", users.list_reviews);
 
 }
 

@@ -988,6 +988,38 @@ class userModel{
             }
         }
 
+        async list_reviews(request_data, user_id){
+            try{
+                const [reviews] = await database.query(`SELECT * FROM item_rating_review where item_id = ?`, [request_data.item_id]);
+                const [users] = await database.query(`SELECT * FROM tbl_user where user_id = ?`, [user_id]);
+                if(reviews.length === 0){
+                    return {
+                        code: response_code.DATA_NOT_FOUND,
+                        message: t('data_not_found')
+                    }
+                }
+
+                const resp = reviews.map(review => ({
+                    user_name: users[0].user_name,
+                    profile_pic: constants.link + users[0].profile_pic,
+                    review: review.review,
+                    rating: review.rating
+                }));
+
+                return {
+                    code: response_code.SUCCESS,
+                    message: t('data_found'),
+                    data: resp
+                }
+
+            } catch(error){
+                return {
+                    code: response_code.OPERATION_FAILED,
+                    message: t("some_error_occured"),
+                    data: error.message
+                }
+            }
+        }
 
 }
 
