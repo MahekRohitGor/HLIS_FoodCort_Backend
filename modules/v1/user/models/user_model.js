@@ -10,7 +10,7 @@ const validator = require("../../../../middlewares/validator");
 const constants = require("../../../../config/constants");
 var lib = require('crypto-lib');
 const moment = require('moment');
-const {contactUs, sendOTP, welcomeEmail, orderConfirmationEmail} = require("../../../../template");
+const {sendOTP, welcomeEmail} = require("../../../../template");
 
 const { t } = require('localizify');
 const { drop } = require("lodash");
@@ -52,7 +52,10 @@ class userModel{
                     const existingUser = await common.findExistingUser(database, userData.email_id, userData.phone_number);
                     
                     if (existingUser.length > 0) {
-                        await common.handleExistingUserOTP(database, existingUser[0]);
+                        return {
+                            code: response_code.OPERATION_FAILED,
+                            message: t('user_already_exists')
+                        }
                     }
         
                 } else {
@@ -64,7 +67,10 @@ class userModel{
                 
                     const existingUser = await common.findExistingUser(database, data_received.email_id);
                     if (existingUser.length > 0) {
-                        await common.handleExistingUserOTP(database, existingUser[0]);
+                        return {
+                            code: response_code.OPERATION_FAILED,
+                            message: t('user_already_exists')
+                        }
                     }
                 }
                 
@@ -537,43 +543,87 @@ class userModel{
 
         async add_to_cart(request_data, user_id) {
             try {
-                const items = request_data.items;
-                if (!items || items.length === 0) {
+                const item_id = request_data.item_id;
+                const item_qty = request_data.item_qty;
+                const ings = request_data.ings;
+                let cart_id;
+
+                if (!item_id || !item_qty) {
                     return {
                         code: response_code.OPERATION_FAILED,
                         message: "No items provided to add to cart"
                     };
                 }
-        
-                const cart_nums = common.generateToken(4);
-        
-                for (const item of items) {
-                    const [priceData] = await database.query(
-                        `SELECT price from tbl_item where item_id = ? AND is_deleted = 0`, 
-                        [item.item_id]
-                    );
-                    
-                    if (priceData.length > 0) {
-                        const cart_data = {
-                            cart_num: cart_nums,
-                            item_id: item.item_id,
-                            item_qty: item.item_qty || 1,
-                            extra_ing_id: item.extra_ing_id,
-                            ing_qty: item.ing_qty,
-                            user_id: user_id
-                        };
-        
-                        await database.query(`INSERT INTO tbl_cart SET ?`, [cart_data]);
+
+                const checkCartItem = `SELECT * from tbl_cart where item_id = ? and user_id = ?`;
+                const [data] = await database.query(checkCartItem, [item_id, user_id]);
+                console.log(data.length);
+                console.log(data);
+
+                if(data.length > 0){
+                    const updateqty = `UPDATE tbl_cart SET item_qty = ? where user_id = ? and item_id = ?`;
+                    await database.query(updateqty, [item_qty, user_id, item_id]);
+                    cart_id = data[0].id;
+
+                    if(ings && ings.length != 0){
+                        for(const ing of ings){
+                            const [ingredients] = await database.query(`SELECT * from tbl_cart_ing where ing_id = ? and cart_id = ?`, [ing.ing_id, cart_id]);
+
+                            if(ingredients.length > 0){
+                                const updateqty = `UPDATE tbl_cart_ing SET ing_qty = ? where cart_id = ? and ing_id = ?`;
+                                await database.query(updateqty, [ing.ing_qty, cart_id, ing.ing_id]);
+                            }
+                            else{
+                                const ing_data = {
+                                    ing_id: ing.ing_id,
+                                    ing_qty: ing.ing_qty,
+                                    cart_id: cart_id
+                                }
+    
+                                await database.query(`INSERT INTO tbl_cart_ing SET ?`, [ing_data]);
+                            }
+                        }
+                    }
+
+                    return {
+                        code: response_code.SUCCESS,
+                        message: t('items_added_to_cart_successfully')
                     }
                 }
-        
+
+                const cart_data = {
+                    user_id: user_id,
+                    item_id: item_id,
+                    item_qty: item_qty
+                }
+
+                const [dataInserted] = await database.query(`INSERT INTO tbl_cart SET ?`, [cart_data]);
+                cart_id = dataInserted.insertId;
+
+                if(ings && ings.length != 0){
+                    for(const ing of ings){
+                        const [ingredients] = await database.query(`SELECT * from tbl_cart_ing where ing_id = ? and cart_id = ?`, [ing.ing_id, cart_id]);
+
+                        if(ingredients.length > 0){
+                            const updateqty = `UPDATE tbl_cart_ing SET ing_qty = ? where cart_id = ? and ing_id = ?`;
+                            await database.query(updateqty, [ing.ing_qty, cart_id, ing.ing_id]);
+                        }
+                        else{
+                            const ing_data = {
+                                ing_id: ing.ing_id,
+                                ing_qty: ing.ing_qty,
+                                cart_id: cart_id
+                            }
+    
+                            await database.query(`INSERT INTO tbl_cart_ing SET ?`, [ing_data]);
+                        }
+                    }
+                }
+
                 return {
                     code: response_code.SUCCESS,
-                    message: 'Items added to cart successfully',
-                    data: {
-                        cart_number: cart_nums
-                    }
-                };
+                    message: t('items_added_to_cart_successfully')
+                }
         
             } catch(error) {
                 return {
@@ -586,16 +636,25 @@ class userModel{
 
         async place_order(request_data, user_id) {
             try {
-                const [driver] = await database.query(`SELECT * FROM tbl_driver where is_available = 1`);
-                if (driver.length === 0) {
+                // 1. Check for available driver
+                const [drivers] = await database.query(
+                    `SELECT driver_id FROM tbl_driver WHERE is_available = 1 LIMIT 1`
+                );
+                
+                if (!drivers || drivers.length === 0) {
                     return {
                         code: response_code.OPERATION_FAILED,
-                        message: t('cuurently_no_delivery_partner_avail_try_again_after_some_time')
-                    }
+                        message: t('no_delivery_partner_available')
+                    };
                 }
+                const driver_id = drivers[0].id;
         
+                // 2. Get cart items
                 const [cartItems] = await database.query(
-                    `SELECT * FROM tbl_cart WHERE user_id = ?`,
+                    `SELECT c.id AS cart_id, c.item_id, c.item_qty, ci.ing_id, ci.ing_qty
+                     FROM tbl_cart c
+                     LEFT JOIN tbl_cart_ing ci ON c.id = ci.cart_id 
+                     WHERE user_id = ?`,
                     [user_id]
                 );
         
@@ -606,154 +665,105 @@ class userModel{
                     };
                 }
         
-                const order_number = common.generateToken(8);
-                const shipping_charge = 85;
+                // 3. Process order data
+                const { method_id, delivery_address_id } = request_data;
+                const voucher_code = request_data.voucher_code || null;
+                const order_num = common.generateOtp(8);
         
-                const orderQuery = `INSERT into tbl_order (user_id, order_num, shipping_charge, status, order_step) values (?,?,?,?,?)`;
-                const [data] = await database.query(orderQuery, [user_id, order_number, shipping_charge, 'pending', '1']);
+                // 4. Create order
+                const order_id = await common.insert_into_order({
+                    order_num,
+                    user_id,
+                    shipping_charge: 100,
+                    status: "pending",
+                    order_step: 1
+                });
         
-                const order_id = data.insertId;
+                // 5. Process each cart item
+                const formatted_cart = await common.format_cart_data(cartItems);
+                const formattedItems = formatted_cart.items; 
+
+                console.log(formattedItems);
                 let sub_total = 0;
         
-                for (const item of cartItems) {
-                    const [priceData] = await database.query(
-                        `SELECT price from tbl_item where item_id = ? AND is_deleted = 0`, 
+                for (const item of formattedItems) {
+                    // Get item price
+                    const [itemPrice] = await database.query(
+                        `SELECT price FROM tbl_item WHERE item_id = ?`, 
                         [item.item_id]
                     );
                     
-                    if (priceData.length > 0) {
-                        const price = priceData[0].price;
-                        const item_total = price * (item.item_qty || 1);
-                        sub_total += item_total;
+                    if (!itemPrice || itemPrice.length === 0) continue;
+                    
+                    const price = itemPrice[0].price * item.item_qty;
+                    sub_total += price;
         
-                        const order_detail = {
+                    // Insert order item
+                    const [orderItem] = await database.query(
+                        `INSERT INTO tbl_order_details SET ?`, 
+                        {
                             order_id: order_id,
                             item_id: item.item_id,
-                            item_qty: item.item_qty || 1,
-                            extra_ing_id: item.extra_ing_id,
-                            ing_qty: item.ing_qty,
-                            total_price: item_total
-                        };
-        
-                        await database.query(`INSERT INTO tbl_order_details SET ?`, [order_detail]);
-                    }
-                }
-        
-                await database.query(
-                    `UPDATE tbl_order SET sub_total = ? WHERE order_id = ?`,
-                    [sub_total, order_id]
-                );
-        
-                const method_id = request_data.method_id;
-                const address_id = request_data.address_id;
-                const voucher_code = request_data.voucher_code || null;
-        
-                let discount_amt = 0;
-                
-                if (voucher_code) {
-                    const [discountData] = await database.query(
-                        `SELECT * from tbl_voucher where voucher_code = ?`, 
-                        [voucher_code]
+                            item_qty: item.item_qty,
+                            price: price
+                        }
                     );
         
-                    if (discountData.length > 0) {
-                        const discountPercentage = discountData[0].discount_percentage;
-                        discount_amt = (sub_total * discountPercentage) / 100;
+                    // Process ingredients if any
+                    if (item.ings && item.ings.length > 0) {
+                        for (const ing of item.ings) {
+                            await database.query(
+                                `INSERT INTO tbl_order_details_ing SET ?`,
+                                {
+                                    order_detail_id: orderItem.insertId,
+                                    ing_id: ing.ing_id,
+                                    qty: ing.ing_qty
+                                }
+                            );
+                        }
                     }
                 }
         
-                const grand_total = sub_total + shipping_charge - discount_amt;
+                // 6. Calculate totals and update order
+                const shipping_charge = 85;
+                const discount_amt = await common.get_discount(sub_total, voucher_code);
+                const grand_total = sub_total + shipping_charge - (discount_amt || 0);
         
-                const updateOrderDetail = `UPDATE tbl_order SET 
-                    method_id = ?, 
-                    delivery_address_id = ?,
-                    voucher_code = ?,
-                    discount_amt = ?,
-                    order_step = '3',
-                    grand_total = ?,
-                    status = 'confirmed',
-                    delivery_status = 'accepted'
-                    WHERE order_id = ?`;
+                await common.update_order(order_id, {
+                    sub_total,
+                    shipping_charge,
+                    discount_amt,
+                    grand_total,
+                    voucher_code,
+                    delivery_address_id,
+                    method_id,
+                    status: "confirmed",
+                    delivery_status: "accepted",
+                    order_step: 3
+                });
         
-                await database.query(updateOrderDetail, [
-                    method_id, 
-                    address_id, 
-                    voucher_code, 
-                    discount_amt, 
-                    grand_total, 
-                    order_id
-                ]);
-        
-                const [address] = await database.query(
-                    `SELECT * FROM tbl_user_delivery_address where address_id = ?`, 
-                    [address_id]
-                );
-        
-                const driver_id = driver[0].driver_id;
-                await database.query(
-                    `UPDATE tbl_driver SET order_id_assigned = ?, is_available = 0 where driver_id = ?`, 
-                    [order_id, driver_id]
-                );
-        
-                await database.query(
-                    `DELETE FROM tbl_cart WHERE user_id = ?`,
-                    [user_id]
-                );
-        
-                const [resultNew] = await database.query(
-                    `SELECT * FROM tbl_order where order_id = ?`, 
-                    [order_id]
-                );
-        
-                const response = {
-                    order_number: resultNew[0].order_num,
-                    sub_total: resultNew[0].sub_total,
-                    shipping_charge: resultNew[0].shipping_charge,
-                    voucher_code: voucher_code || "No Voucher Used",
-                    grand_total: grand_total,
-                    status: resultNew[0].status,
-                    delivery_status: resultNew[0].delivery_status,
-                    address: address[0].address_line_1 + ", " + address[0].address_line_2 + ", " + 
-                            address[0].city + ", " + address[0].state + ", " + address[0].pincode,
-                    delivery_partner: driver[0].driver_name,
-                    delivery_partner_phone: driver[0].phone_number
-                }
-        
-                const [pref] = await database.query(
-                    `SELECT * from tbl_notification_pref where user_id = ?`, 
-                    [user_id]
-                );
-                
-                if (pref && pref[0].is_complete_order) {
-                    await database.query(`INSERT INTO tbl_notification (
-                        cover_image,
-                        title,
-                        descriptions,
-                        user_id,
-                        notification_type,
-                        is_read
-                    ) VALUES (
-                        'alert.png',
-                        "Order was placed Successfully",
-                        "Your Order was placed Successfully",
-                        ?,
-                        'alert',
-                        0
-                    );`, [user_id]);
-                }
+                // 7. Clear user's cart
+                await database.query(`DELETE FROM tbl_cart_ing WHERE cart_id IN 
+                    (SELECT id FROM tbl_cart WHERE user_id = ?)`, [user_id]);
+                await database.query(`DELETE FROM tbl_cart WHERE user_id = ?`, [user_id]);
         
                 return {
                     code: response_code.SUCCESS,
-                    message: ('order_placed_successfully'),
-                    data: response
-                }
+                    message: t('order_placed_successfully'),
+                    data: {
+                        order_id,
+                        order_num,
+                        grand_total
+                    }
+                };
         
             } catch(error) {
+                console.error("Order placement error:", error);
                 return {
                     code: response_code.OPERATION_FAILED,
-                    message: t("some_error_occured"),
+                    message: t("some_error_occurred"),
                     data: error.message
-                }
+                };
             }
         }
 

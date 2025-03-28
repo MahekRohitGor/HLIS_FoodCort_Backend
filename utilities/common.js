@@ -133,8 +133,12 @@ class common{
     }
 
     async findExistingUser(database, email_id, phone_number = null) {
-                const findUserQuery = `SELECT * FROM tbl_user WHERE (email_id = ? OR phone_number = ?) AND is_deleted = 0 AND is_active = 1`;
+                const findUserQuery = `SELECT * FROM tbl_user WHERE (email_id = ? OR phone_number = ?) AND is_deleted = 0`;
+                console.log(findUserQuery);
+                
                 const [existingUser] = await database.query(findUserQuery, [email_id, phone_number || email_id]);
+                console.log(existingUser);
+                
                 return existingUser;
     }
             
@@ -146,7 +150,7 @@ class common{
                     };
                 }
             
-                const otp_ = common.generateOtp(4);
+                const otp_ = this.generateOtp(4);
                 const subject = "Cargo Rider - OTP for Verification";
                 const email = user.email_id;
     
@@ -157,7 +161,7 @@ class common{
                 
                 try {
                     const htmlMessage = sendOTP(data);
-                    await common.sendMail(subject, email, htmlMessage);
+                    await this.sendMail(subject, email, htmlMessage);
                     console.log("OTP email sent successfully!");
                 } catch (error) {
                     console.error("Error sending OTP email:", error);
@@ -171,6 +175,72 @@ class common{
                     message: t('otp_sent_please_verify_acc'),
                     data: user.email_id
                 };
+    }
+
+    async format_cart_data(cart_data){
+        console.log(cart_data);
+        const grouped_items = {};
+
+        cart_data.forEach(row => {
+            if(!grouped_items[row.cart_id]){
+                grouped_items[row.cart_id] = {
+                    item_id: row.item_id,
+                    item_qty: row.item_qty,
+                    ings: []
+                }
+
+                if (row.ing_id) {
+                    grouped_items[row.cart_id].ings.push({
+                      ing_id: row.ing_id,
+                      ing_qty: row.ing_qty
+                    });
+                  }
+            }
+
+            else{
+                if (row.ing_id) {
+                    grouped_items[row.cart_id].ings.push({
+                      ing_id: row.ing_id,
+                      ing_qty: row.ing_qty
+                    });
+                  }
+            }
+
+        });
+
+        const result = {
+            items: Object.values(grouped_items)
+          };
+
+        console.log(result);
+        
+        return result;
+    }
+
+    async get_discount(sub_total, voucher_code){
+        const discount_amt = 0;
+        if (voucher_code) {
+            const [discountData] = await database.query(
+                `SELECT * from tbl_voucher where voucher_code = ?`, 
+                [voucher_code]
+            );
+
+            if (discountData.length > 0) {
+                const discountPercentage = discountData[0].discount_percentage;
+                discount_amt = (sub_total * discountPercentage) / 100;
+            }
+        }
+
+        return discount_amt;
+    }
+
+    async insert_into_order(data) {
+        const [result] = await database.query(`INSERT INTO tbl_order SET ?`, data);
+        return result.insertId;
+    }
+    
+    async update_order(order_id, data) {
+        await database.query(`UPDATE tbl_order SET ? WHERE order_id = ?`, [data, order_id]);
     }
     
     async updateUserInfo(user_id, user_data, callback){
