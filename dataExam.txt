@@ -1,0 +1,45 @@
+3xqrszqetjer0bvg9uoci7pb9kkszxszsedp64cy
+qyjiyX9YwzSb4ZNTdBS/EQ==
+
+{
+"is_nearby": 1
+}
+
+{"item_id": 1}
+
+{ "items": 
+[ { "item_id": 1, "item_qty": 2, "extra_ing_id": 1, "ing_qty": 3 }], "method_id": 1, "address_id": 1, "voucher_code": "RUST25"}
+
+{
+    "items": [
+        {
+            "item_id": 1,
+            "item_qty": 2,
+            "extra_ing_id": 2,
+            "ing_qty": 1
+        },
+        {
+            "item_id": 2,
+            "item_qty": 1,
+            "extra_ing_id": null,
+            "ing_qty": null
+        }
+    ]
+}
+
+{
+    "method_id": 1,
+    "address_id": 2,
+    "voucher_code": "RUST25"
+}
+
+{"order_id": 7}
+
+{"is_current_order": 1}
+{"is_history": 1}
+
+{"search_text": "hi", "category_id": 1}
+
+{"latitude":"23.041000", "longitude":"72.578537", "address_line_1":"dfghj", "address_line_2":"asdfgh", "city":"Mumbai", "state": "Maharashtra", "pincode": "370001", "country_id": 1}
+
+{"card_number": "0987654312345678", "card_holder_name": "Ankita Gor", "expires_at": "2050-05-08", "cvv": "789"}

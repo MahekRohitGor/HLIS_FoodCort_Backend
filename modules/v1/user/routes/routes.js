@@ -11,6 +11,7 @@ const user = (app) =>{
         app.post("/v1/user/home-page", users.home_page_items);
         app.post("/v1/user/filter", users.filter);
         app.post("/v1/user/list-item-detail", users.list_item_detail);
+        app.post("/v1/user/add-to-cart", users.add_to_cart);
         app.post("/v1/user/place-order", users.place_order);
         app.post("/v1/user/list-order", users.list_user_order);
         app.post("/v1/user/list-user-favs", users.list_user_favs);
@@ -20,6 +21,7 @@ const user = (app) =>{
         app.post("/v1/user/track-order", users.order_track);
         app.post("/v1/user/list-voucher", users.list_voucher);
         app.post("/v1/user/list-reviews", users.list_reviews);
+        app.post("/v1/user/edit-profile", users.edit_profile);
 
 }
 

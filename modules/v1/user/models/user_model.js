@@ -535,38 +535,25 @@ class userModel{
             }
         }
 
-        async place_order(request_data, user_id){
-            try{
-
-                const [driver] = await database.query(`SELECT * FROM tbl_driver where is_available = 1`);
-                if(driver.length === 0){
-                    return {
-                        code: response_code.OPERATION_FAILED,
-                        message: t('cuurently_no_delivery_partner_avail_try_again_after_some_time')
-                    }
-                }
-
+        async add_to_cart(request_data, user_id) {
+            try {
                 const items = request_data.items;
                 if (!items || items.length === 0) {
                     return {
                         code: response_code.OPERATION_FAILED,
-                        message: "No items provided to place order"
+                        message: "No items provided to add to cart"
                     };
                 }
-                const order_number = common.generateToken(8);
-                const shipping_charge = 85;
-
-                const orderQuery = `INSERT into tbl_order (user_id, order_num, shipping_charge, status, order_step) values (?,?,?,?,?)`;
-                const [data] = await database.query(orderQuery, [user_id, order_number, shipping_charge, 'pending', '1']);
-
-                const order_id = data.insertId;
+        
                 const cart_nums = common.generateToken(4);
-
-                for(const item of items){
-                    const [priceData] = await database.query(`SELECT price from tbl_item where item_id = ? AND is_deleted = 0`, [item.item_id]);
+        
+                for (const item of items) {
+                    const [priceData] = await database.query(
+                        `SELECT price from tbl_item where item_id = ? AND is_deleted = 0`, 
+                        [item.item_id]
+                    );
+                    
                     if (priceData.length > 0) {
-                        const price = priceData[0].price;
-
                         const cart_data = {
                             cart_num: cart_nums,
                             item_id: item.item_id,
@@ -575,103 +562,193 @@ class userModel{
                             ing_qty: item.ing_qty,
                             user_id: user_id
                         };
-    
+        
                         await database.query(`INSERT INTO tbl_cart SET ?`, [cart_data]);
-                        
+                    }
+                }
+        
+                return {
+                    code: response_code.SUCCESS,
+                    message: 'Items added to cart successfully',
+                    data: {
+                        cart_number: cart_nums
+                    }
+                };
+        
+            } catch(error) {
+                return {
+                    code: response_code.OPERATION_FAILED,
+                    message: t("some_error_occured"),
+                    data: error.message
+                }
+            }
+        }
+
+        async place_order(request_data, user_id) {
+            try {
+                const [driver] = await database.query(`SELECT * FROM tbl_driver where is_available = 1`);
+                if (driver.length === 0) {
+                    return {
+                        code: response_code.OPERATION_FAILED,
+                        message: t('cuurently_no_delivery_partner_avail_try_again_after_some_time')
+                    }
+                }
+        
+                const [cartItems] = await database.query(
+                    `SELECT * FROM tbl_cart WHERE user_id = ?`,
+                    [user_id]
+                );
+        
+                if (!cartItems || cartItems.length === 0) {
+                    return {
+                        code: response_code.OPERATION_FAILED,
+                        message: "No items in cart to place order"
+                    };
+                }
+        
+                const order_number = common.generateToken(8);
+                const shipping_charge = 85;
+        
+                const orderQuery = `INSERT into tbl_order (user_id, order_num, shipping_charge, status, order_step) values (?,?,?,?,?)`;
+                const [data] = await database.query(orderQuery, [user_id, order_number, shipping_charge, 'pending', '1']);
+        
+                const order_id = data.insertId;
+                let sub_total = 0;
+        
+                for (const item of cartItems) {
+                    const [priceData] = await database.query(
+                        `SELECT price from tbl_item where item_id = ? AND is_deleted = 0`, 
+                        [item.item_id]
+                    );
+                    
+                    if (priceData.length > 0) {
+                        const price = priceData[0].price;
+                        const item_total = price * (item.item_qty || 1);
+                        sub_total += item_total;
+        
                         const order_detail = {
                             order_id: order_id,
                             item_id: item.item_id,
                             item_qty: item.item_qty || 1,
                             extra_ing_id: item.extra_ing_id,
                             ing_qty: item.ing_qty,
-                            total_price: price*item.item_qty
+                            total_price: item_total
                         };
-
+        
                         await database.query(`INSERT INTO tbl_order_details SET ?`, [order_detail]);
                     }
                 }
-
-                // Add Payment and Address
+        
+                await database.query(
+                    `UPDATE tbl_order SET sub_total = ? WHERE order_id = ?`,
+                    [sub_total, order_id]
+                );
+        
                 const method_id = request_data.method_id;
                 const address_id = request_data.address_id;
-                const voucher_code = request_data.voucher_code;
-
-                const findDiscountAmt = `SELECT * from tbl_voucher where voucher_code = ?`;
-                const [discountData] = await database.query(findDiscountAmt, [voucher_code]);
-
-                const discountPercentage = discountData[0].discount_percentage;
-
-                const [result] = await database.query(`SELECT * FROM tbl_order where order_id = ?`, [order_id]);
-
-                let discount_amt;
-
-                if(discountData.length === 0){
-                    discount_amt = 0;
-                }
-
-                discount_amt = (result[0].sub_total * discountPercentage) / 100;
-                const grand_total = result[0].sub_total + shipping_charge - discount_amt;
-
-                const updateOrderDetail = `UPDATE tbl_order SET method_id = ?, delivery_address_id = ?,
-                voucher_code = ?,
-                discount_amt = ?,
-                order_step = '3',
-                grand_total = ?,
-                status = 'confirmed',
-                delivery_status = 'accepted'
-                where order_id = ?`;
-
-                await database.query(updateOrderDetail, [method_id, address_id, voucher_code, discount_amt, grand_total, order_id]);
-
-                const [address] = await database.query(`SELECT * FROM tbl_user_delivery_address where address_id = ?`, [address_id]);
-
+                const voucher_code = request_data.voucher_code || null;
+        
+                let discount_amt = 0;
                 
-
+                if (voucher_code) {
+                    const [discountData] = await database.query(
+                        `SELECT * from tbl_voucher where voucher_code = ?`, 
+                        [voucher_code]
+                    );
+        
+                    if (discountData.length > 0) {
+                        const discountPercentage = discountData[0].discount_percentage;
+                        discount_amt = (sub_total * discountPercentage) / 100;
+                    }
+                }
+        
+                const grand_total = sub_total + shipping_charge - discount_amt;
+        
+                const updateOrderDetail = `UPDATE tbl_order SET 
+                    method_id = ?, 
+                    delivery_address_id = ?,
+                    voucher_code = ?,
+                    discount_amt = ?,
+                    order_step = '3',
+                    grand_total = ?,
+                    status = 'confirmed',
+                    delivery_status = 'accepted'
+                    WHERE order_id = ?`;
+        
+                await database.query(updateOrderDetail, [
+                    method_id, 
+                    address_id, 
+                    voucher_code, 
+                    discount_amt, 
+                    grand_total, 
+                    order_id
+                ]);
+        
+                const [address] = await database.query(
+                    `SELECT * FROM tbl_user_delivery_address where address_id = ?`, 
+                    [address_id]
+                );
+        
                 const driver_id = driver[0].driver_id;
-
-                await database.query(`UPDATE tbl_driver SET order_id_assigned = ?, is_available = 0 where driver_id = ?`, [order_id, driver_id]);
-                const [resultNew] = await database.query(`SELECT * FROM tbl_order where order_id = ?`, [order_id]);
-
+                await database.query(
+                    `UPDATE tbl_driver SET order_id_assigned = ?, is_available = 0 where driver_id = ?`, 
+                    [order_id, driver_id]
+                );
+        
+                await database.query(
+                    `DELETE FROM tbl_cart WHERE user_id = ?`,
+                    [user_id]
+                );
+        
+                const [resultNew] = await database.query(
+                    `SELECT * FROM tbl_order where order_id = ?`, 
+                    [order_id]
+                );
+        
                 const response = {
                     order_number: resultNew[0].order_num,
                     sub_total: resultNew[0].sub_total,
                     shipping_charge: resultNew[0].shipping_charge,
-                    voucher_code: request_data.voucher_code || "No Voucher Used",
+                    voucher_code: voucher_code || "No Voucher Used",
                     grand_total: grand_total,
                     status: resultNew[0].status,
                     delivery_status: resultNew[0].delivery_status,
-                    address: address[0].address_line_1 + ", " + address[0].address_line_2 + ", " + address[0].city + ", " + address[0].state + ", " + address[0].pincode,
+                    address: address[0].address_line_1 + ", " + address[0].address_line_2 + ", " + 
+                            address[0].city + ", " + address[0].state + ", " + address[0].pincode,
                     delivery_partner: driver[0].driver_name,
                     delivery_partner_phone: driver[0].phone_number
                 }
-
-                const [pref] = await database.query(`SELECT * from tbl_notification_pref where user_id = ?`, [user_id]);
+        
+                const [pref] = await database.query(
+                    `SELECT * from tbl_notification_pref where user_id = ?`, 
+                    [user_id]
+                );
                 
-                if(pref && pref[0].is_complete_order){
+                if (pref && pref[0].is_complete_order) {
                     await database.query(`INSERT INTO tbl_notification (
-                            cover_image,
-                            title,
-                            descriptions,
-                            user_id,
-                            notification_type,
-                            is_read
-                        ) VALUES (
-                            'alert.png',
-                            "Order was placed Successfully",
-                            "Your Order was placed Successfully",
-                            ?,
-                            'alert',
-                            0
-                        );`, [user_id]);
+                        cover_image,
+                        title,
+                        descriptions,
+                        user_id,
+                        notification_type,
+                        is_read
+                    ) VALUES (
+                        'alert.png',
+                        "Order was placed Successfully",
+                        "Your Order was placed Successfully",
+                        ?,
+                        'alert',
+                        0
+                    );`, [user_id]);
                 }
-
+        
                 return {
                     code: response_code.SUCCESS,
                     message: ('order_placed_successfully'),
                     data: response
                 }
-
-            } catch(error){
+        
+            } catch(error) {
                 return {
                     code: response_code.OPERATION_FAILED,
                     message: t("some_error_occured"),
@@ -1009,6 +1086,37 @@ class userModel{
                 return {
                     code: response_code.SUCCESS,
                     message: t('data_found'),
+                    data: resp
+                }
+
+            } catch(error){
+                return {
+                    code: response_code.OPERATION_FAILED,
+                    message: t("some_error_occured"),
+                    data: error.message
+                }
+            }
+        }
+
+        async edit_profile(request_data, user_id){
+            try{
+                const data = {
+                    user_name: request_data.user_name,
+                    profile_pic: request_data.profile_pic
+                }
+
+                await database.query(`UPDATE tbl_user SET ? where user_id = ? and is_active = 1 and is_deleted = 0`, [data, user_id]);
+                const [users] = await database.query(`SELECT * from tbl_user where user_id = ?`, [user_id]);
+
+                const resp = {
+                    name: users[0].user_name,
+                    email_id: users[0].email_id,
+                    phone_number: users[0].phone_number
+                }
+
+                return {
+                    code: response_code.SUCCESS,
+                    message: t('Profile Edited Successfully'),
                     data: resp
                 }
 

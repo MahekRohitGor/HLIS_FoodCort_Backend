@@ -58,6 +58,15 @@ class User{
         await common.response(res, response_data);
     }
 
+    async add_to_cart(req,res){
+        const requested_data = req.body;
+        const request_data = JSON.parse(common.decryptPlain(requested_data));
+        const user_id = req.user_id;
+
+        const response_data = await userModel.add_to_cart(request_data, user_id);
+        await common.response(res, response_data);
+    }
+
     async place_order(req,res){
         const requested_data = req.body;
         const request_data = JSON.parse(common.decryptPlain(requested_data));
@@ -136,6 +145,15 @@ class User{
         const user_id = req.user_id;
 
         const response_data = await userModel.list_reviews(request_data, user_id);
+        await common.response(res, response_data);
+    }
+
+    async edit_profile(req,res){
+        const requested_data = req.body;
+        const request_data = JSON.parse(common.decryptPlain(requested_data));
+        const user_id = req.user_id;
+
+        const response_data = await userModel.edit_profile(request_data, user_id);
         await common.response(res, response_data);
     }
     
